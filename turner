@@ -1,0 +1,4 @@
+#!/bin/sh
+# Launch Turner with the project virtualenv. caffeinate keeps the Mac from idle-sleeping mid-task
+# (a sleeping Mac pauses the model; the display can still turn off).
+exec caffeinate -i "$HOME/models/venv312/bin/python" "$(dirname "$0")/turner.py" "$@"

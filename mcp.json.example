@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "demo": {
+      "command": "python",
+      "args": ["examples/mcp_demo_server.py"],
+      "skills": "all",
+      "trust": false
+    }
+  }
+}

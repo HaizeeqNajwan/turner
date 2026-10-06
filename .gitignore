@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Secrets / local config (keep mcp.json.example, ignore the real one)
+.env
+.env.*
+mcp.json
+
+# Agent runtime data: audit log + saved chat sessions (personal)
+workspace/
+**/.turner/
+
+# Generated output
+evals/results/
+
+# Old experiment (CrewAI prototype, chat memory)
+old/
+
+# Model weights (large)
+*.safetensors
+*.gguf
+*.bin

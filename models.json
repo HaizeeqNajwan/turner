@@ -1,0 +1,23 @@
+{
+  "default": "gemma4-e2b",
+  "models": {
+    "gemma4-e2b": {
+      "backend": "mlx",
+      "path": "~/models/original/mlx-community/gemma-4-e2b-it-4bit"
+    },
+    "qwen3.5-4b": {
+      "backend": "mlx",
+      "path": "~/models/mlx/Qwen3.5-4B-4bit"
+    },
+    "qwen3.5-4b-8bit": {
+      "backend": "mlx",
+      "path": "~/models/mlx/Qwen3.5-4B-8bit"
+    },
+    "lmstudio": {
+      "backend": "openai",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "model": "auto",
+      "context": 24000
+    }
+  }
+}
