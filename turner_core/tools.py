@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -213,6 +214,73 @@ class Toolbox:
                 note = "\nWARNING: this file has a Python syntax error at line %s: %s. Fix it." % (e.lineno, e.msg)
         return "OK: %s %s (%d lines)%s%s" % ("replaced" if existed else "created", os.path.relpath(p, self.workdir),
                                               content.count("\n") + 1, " — previous version backed up" if bak else "", note)
+
+    @tool("make_document", "Create a PDF, Word (.docx) or Excel (.xlsx) file from text you write in simple Markdown "
+          "(# headings, - bullets, 1. numbered lists, **bold**, | tables |). Saved in the workspace; use export_file to copy it elsewhere.",
+          {"path": S("File to create, relative to the workspace, ending in .pdf, .docx or .xlsx (for example cover_letter.pdf)."),
+           "content": S("The complete document text in simple Markdown."),
+           "title": S("Optional title shown at the top of the document.")}, ["path", "content"])
+    def make_document(self, path, content, title=""):
+        from . import documents
+        base = os.path.basename(self.workdir) + "/"
+        if not os.path.isabs(str(path)) and str(path).startswith(base) and not os.path.isdir(os.path.join(self.workdir, base)):
+            path = str(path)[len(base):]
+        ext = os.path.splitext(str(path))[1].lower()
+        if ext not in documents.BUILDERS:
+            return "ERROR: make_document can create .pdf, .docx and .xlsx files. Give a path that ends in one of them."
+        if not str(content).strip():
+            return "ERROR: the content is empty. Write the full document text first."
+        p = self.policy.check_write(path)
+        existed = os.path.isfile(p)
+        bak = self.policy.backup(p)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        info = documents.BUILDERS[ext](p, str(title or "").strip(), documents.parse(content))
+        self.policy.record(p, bak)
+        warn = ""
+        found = documents.PLACEHOLDER.findall(str(content) + " " + str(title))
+        if found:
+            warn = ("\nWARNING: the document still contains placeholders (%s). A finished document must not. Replace each with the "
+                    "real detail (from the CV or the user's message), or reword the sentence without it (for example start a letter "
+                    "with 'Dear Hiring Manager,'), then call make_document again with the corrected text." % ", ".join(sorted(set(found))[:4]))
+        return "OK: %s %s (%s, %s)%s%s" % ("replaced" if existed else "created", os.path.relpath(p, self.workdir), info,
+                                           _size(os.path.getsize(p)), " — previous version backed up" if bak else "", warn)
+
+    @tool("export_file", "Copy a finished file from the workspace to the user's Desktop, Documents or Downloads folder "
+          "(or a folder inside them). The user is asked to approve. Use it when they want the file somewhere they can open it.",
+          {"path": S("The workspace file to copy, for example report.pdf."),
+           "destination": S("Where to put it: Desktop, Documents, Downloads, a folder inside them such as Desktop/Reports, "
+                            "or a full file path such as ~/Desktop/letter.pdf.")}, ["path", "destination"])
+    def export_file(self, path, destination):
+        src = self.policy.resolve(path)
+        if not self.policy._inside(src, self.workdir) or self.policy._inside(src, self.policy.state_dir):
+            return "ERROR: export_file only copies files that are inside the workspace. Create the file there first."
+        if not os.path.isfile(src):
+            return "ERROR: file not found in the workspace: %s" % os.path.relpath(src, self.workdir)
+        if self.policy.is_secret(src):
+            raise Denied("%s looks like a credential or secret file and cannot be exported" % os.path.basename(src))
+        if os.path.getsize(src) > 100_000_000:
+            return "ERROR: the file is larger than 100 MB; it was not copied."
+        dest = self.policy.check_export(destination, os.path.basename(src))
+        if os.path.isdir(dest):
+            return "ERROR: %s is a folder. Give a file name as well." % dest
+        if not os.path.splitext(dest)[1]:
+            return ("ERROR: %s is not an existing folder and has no file extension. Give an existing folder (Desktop, Documents, "
+                    "Downloads or a folder inside them), or a file name that ends in %s." % (os.path.basename(dest), os.path.splitext(src)[1] or ".pdf"))
+        existed = os.path.exists(dest)
+        home = os.path.expanduser("~")
+        shown = "~" + dest[len(home):] if dest.startswith(home) else dest
+        self.policy.confirm("replace a file outside the workspace" if existed else "save a copy outside the workspace",
+                            "copy  %s\nto    %s%s" % (os.path.relpath(src, self.workdir), shown,
+                                                      "\n(a file with that name already exists and will be replaced; the old one is kept in .turner/backups)" if existed else ""),
+                            "it puts a file in your own folders" + (" and replaces an existing file" if existed else ""))
+        kept = ""
+        if existed:
+            keep = os.path.join(self.policy.state_dir, "backups", self.policy.session, "exported", "%d-%s" % (time.time() * 1000 % 1e9, os.path.basename(dest)))
+            os.makedirs(os.path.dirname(keep), exist_ok=True)
+            shutil.copy2(dest, keep)
+            kept = " (the file it replaced is kept in .turner/backups)"
+        shutil.copy2(src, dest)
+        return "OK: copied %s to %s%s" % (os.path.relpath(src, self.workdir), shown, kept)
 
     @tool("edit_file", "Replace one exact piece of text in a file. 'old' must appear exactly once.",
           {"path": S("File to edit."), "old": S("Exact existing text to replace."), "new": S("Replacement text.")},

@@ -96,13 +96,28 @@ Each mode has its own checklist, tool belt and temperature (`turner_core/skills.
 |---|---|---|
 | **code** | look → build → run → fix → report | list_dir, read_file, search_files, write_file, edit_file, run_python, run_shell |
 | **frontend** | plan components → write each file → read every file back and fix → report | list_dir, read_file, search_files, write_file, edit_file, run_shell |
-| **research** | search → open pages → cross-check → answer with sources | web_search, fetch_url, read_document, read_file, write_file |
-| **write** | reader and purpose → draft → self-edit → save if asked | read_file, read_document, write_file, web_search, fetch_url |
-| **analyse** | inspect → compute with pandas → interpret → limits | read_document, read_file, run_python, list_dir, search_files, write_file |
-| **risk** | context → identify → score → mitigate → register | risk_register, read_document, read_file, write_file, web_search, fetch_url |
-| **chat** | quick questions, arithmetic, remembering preferences | web_search, fetch_url, read_file, list_dir, run_python |
+| **research** | search → open pages → cross-check → answer with sources | web_search, fetch_url, read_document, read_file, write_file, make_document, export_file |
+| **write** | reader and purpose → draft → self-edit → save if asked | read_file, read_document, write_file, make_document, export_file, web_search, fetch_url |
+| **analyse** | inspect → compute with pandas → interpret → limits | read_document, read_file, run_python, list_dir, search_files, write_file, make_document, export_file |
+| **risk** | context → identify → score → mitigate → register | risk_register, read_document, read_file, write_file, make_document, export_file, web_search, fetch_url |
+| **chat** | quick questions, arithmetic, remembering preferences | web_search, fetch_url, read_file, read_document, list_dir, run_python, make_document, export_file |
 
 `read_document` handles .docx, .pdf, .xlsx and .csv. `remember` is available in every mode.
+
+**Making documents and saving them where you can open them.**
+- `make_document` creates a **PDF, Word (.docx) or Excel (.xlsx)** file from simple Markdown (`#` headings, `-` bullets,
+  `1.` lists, `**bold**`, `| tables |`). Turner's own code does the layout, so a small model only has to write the text.
+  It warns the model if the text still has placeholders such as `[Your Name]`.
+- `export_file` copies a finished workspace file to **Desktop, Documents or Downloads** (or a folder inside them). The user
+  is always asked first (unless the approval mode is `auto`); replacing an existing file keeps the old copy in `.turner/backups/`.
+  Nothing else outside the workspace can be written.
+- Relative paths such as `Downloads/cv.pdf` that are not in the workspace are also looked up under your home folder (reading only).
+
+**Job applications.** `skills/jobs.md` is a mode for CVs and cover letters: it reads your CV (full path), takes the job description,
+writes only what the CV supports, and saves a PDF. It prepares documents; it never sends anything.
+
+**Wrong "I can't".** Small models often claim they cannot read a file or make a PDF. The system prompt now lists what Turner can do in
+the current mode, and the harness sends the model back once to try the tool when it refuses a file task without trying.
 
 **Your own modes.** Any `.md` file in `skills/` becomes a mode: a few lines of settings and a plain-language playbook.
 `skills/minutes.md` (meeting minutes with action items) is a working example; `skills/README.md` explains the format.
@@ -196,9 +211,26 @@ turner_core/mcp_client.py  external tool servers
 turner_core/safety.py      policy, approvals, backups, undo, audit log
 turner_core/agent.py       the loop, deep mode, review, compaction, sessions
 tests/test_turner_core.py  offline tests (no model needed)
+turner_core/documents.py   builds PDF / Word / Excel files from Markdown (make_document)
 evals/run_evals.py         task suite for comparing models; results in evals/results/
 examples/mcp_demo_server.py  a small MCP server
 old/                       the earlier CrewAI experiments, unchanged
 ```
 
 Run the tests: `~/models/venv312/bin/python tests/test_turner_core.py`
+
+## Web interface (optional)
+
+`turner_server.py` runs Turner as a small local web service so a browser can use it instead of the terminal. The Laravel app in
+`~/Documents/Workspace/chaturner` is the interface (threads, history, login, files, permission prompts).
+
+```bash
+cd ~/Documents/Workspace/chaturner && ./start.sh      # engine + web app, then http://localhost:8080
+```
+
+- One **thread** in the web app = one workspace folder under `threads/` and one Turner conversation of its own.
+- Permission questions that the terminal asks with `y/n/a` become buttons on the page. "Always" lasts for that thread.
+- The engine loads the model once and runs one task at a time (extra tasks wait). It listens on `127.0.0.1` only and needs the shared
+  token in `web.token` (created on first start; kept out of git).
+- Not included in the web engine yet: MCP tools (`mcp.json`), live model switching, streaming of the answer text.
+- Checks: `~/models/venv312/bin/python tests/test_server.py` (59, no model needed).

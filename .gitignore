@@ -26,3 +26,9 @@ old/
 *.safetensors
 *.gguf
 *.bin
+
+# Web engine: per-thread workspaces and the shared token
+threads/
+web.token
+engine.log
+web.model

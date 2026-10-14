@@ -5,6 +5,7 @@ A 2B-class local model will sometimes do the wrong thing with total confidence,
 so nothing it asks for is trusted blindly:
 
   * writes are confined to the workspace; existing files are backed up first
+  * finished files can be copied to Desktop, Documents or Downloads only, and only with the user's approval
   * secrets (ssh keys, .env, keychains, cloud credentials) can't be read
   * shell commands are sorted into safe / needs-approval / always-blocked
   * python snippets that delete, spawn processes or talk to the network need approval
@@ -27,6 +28,7 @@ import time
 from urllib.parse import urlparse
 
 HOME = os.path.expanduser("~")
+EXPORT_DIRS = ("Desktop", "Documents", "Downloads")      # the only places a finished file may be copied to
 
 SECRET_PATTERNS = [
     r"/\.ssh(/|$)", r"/\.aws(/|$)", r"/\.gnupg(/|$)", r"/\.kube(/|$)", r"/\.docker/config\.json$",
@@ -108,8 +110,44 @@ class Policy:
     def is_secret(self, path):
         return any(re.search(p, path) for p in SECRET_PATTERNS)
 
+    def resolve_read(self, path):
+        """Like resolve, but a relative path that is not in the workspace is also looked for under the home
+        folder, so "Downloads/cv.pdf" finds ~/Downloads/cv.pdf. Reading only: writes never use this."""
+        raw = os.path.expanduser(str(path or "").strip())
+        p = self.resolve(raw)
+        if raw and not os.path.isabs(raw) and not os.path.exists(p):
+            for base in (HOME, os.path.join(HOME, "Desktop"), os.path.join(HOME, "Documents"), os.path.join(HOME, "Downloads")):
+                q = os.path.realpath(os.path.join(base, raw))
+                if os.path.exists(q):
+                    return q
+        return p
+
+    def export_roots(self):
+        return [os.path.realpath(os.path.join(HOME, d)) for d in EXPORT_DIRS]
+
+    def check_export(self, destination, filename):
+        """Where may a finished file be copied? Only into Desktop, Documents or Downloads (or folders inside them)."""
+        if self.approve == "readonly":
+            raise Denied("read-only mode: saving files is disabled")
+        raw = os.path.expanduser(str(destination or "").strip())
+        if not raw:
+            raise Denied("no destination given. Use Desktop, Documents or Downloads.")
+        if not os.path.isabs(raw):
+            raw = os.path.join(HOME, raw)
+        p = os.path.realpath(raw)
+        if os.path.isdir(p) or str(destination).rstrip().endswith("/"):
+            p = os.path.join(p, filename)
+        if self.is_secret(p):
+            raise Denied("saving %s is not allowed: it looks like a credential or secret file" % p)
+        if not any(self._inside(p, r) for r in self.export_roots()):
+            raise Denied("saving to %s is not allowed. Copies may only go to Desktop, Documents or Downloads "
+                         "(or a folder inside them)." % p)
+        if not os.path.isdir(os.path.dirname(p)):
+            raise Denied("the folder %s does not exist. Choose an existing folder." % os.path.dirname(p))
+        return p
+
     def check_read(self, path):
-        p = self.resolve(path)
+        p = self.resolve_read(path)
         if self.is_secret(p):
             raise Denied("reading %s is not allowed: it looks like a credential or secret file" % p)
         if not any(self._inside(p, r) for r in self.read_roots + [self.workdir]):

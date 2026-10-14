@@ -293,5 +293,119 @@ check("frontend routing", skills.route(None, "Build a React pricing card compone
 check("tsx file routes to frontend", skills.route(None, "fix the props in Navbar.tsx") == "frontend")
 check("py file routes to code", skills.route(None, "fix the bug in parser.py") == "code")
 
+
+# ── documents, export, path fallback, refusal guard ─────────────────────
+import shutil as _shutil                                                       # noqa: E402
+from turner_core.agent import REFUSAL, PLACEHOLDER, FILE_TASK                   # noqa: E402
+from turner_core import documents                                              # noqa: E402
+
+dws = tempfile.mkdtemp()
+dpol = Policy(dws, approve="auto", interactive=False)
+dtb = Toolbox(dpol)
+MD = "# Report\n\nIntro with **bold** text.\n\n- first point\n- second point\n\n1. step one\n2. step two\n\n| Name | Score |\n|---|---|\n| Ann | 91 |\n| Bob | 78 |\n"
+ok, out = dtb.call("make_document", {"path": "report.pdf", "content": MD, "title": "My Title"})
+check("make_document pdf ok", ok and os.path.isfile(os.path.join(dws, "report.pdf")))
+import pdfplumber                                                              # noqa: E402
+with pdfplumber.open(os.path.join(dws, "report.pdf")) as _pdf:
+    _txt = _pdf.pages[0].extract_text()
+check("pdf has title, heading, bullet, table cell", all(s in _txt for s in ("My Title", "Report", "first point", "Ann")))
+ok, out = dtb.call("make_document", {"path": "letter.docx", "content": MD})
+import docx as _docx                                                           # noqa: E402
+_d = _docx.Document(os.path.join(dws, "letter.docx"))
+check("make_document docx ok", ok and any("first point" in p.text for p in _d.paragraphs) and len(_d.tables) == 1)
+ok, out = dtb.call("make_document", {"path": "scores.xlsx", "content": MD})
+import openpyxl as _ox                                                         # noqa: E402
+_wb = _ox.load_workbook(os.path.join(dws, "scores.xlsx"))
+check("make_document xlsx ok", ok and _wb["Data"]["A2"].value == "Ann" and _wb["Data"]["B2"].value == 91)
+ok, out = dtb.call("make_document", {"path": "evil.xlsx", "content": "| a |\n|---|\n| =HYPERLINK(\"http://x\") |\n"})
+check("xlsx text starting with = stays text", _ox.load_workbook(os.path.join(dws, "evil.xlsx"))["Data"]["A2"].data_type == "s")
+ok, out = dtb.call("make_document", {"path": "x.exe", "content": "hi"})
+check("make_document refuses other types", not ok and "ERROR" in out)
+ok, out = dtb.call("make_document", {"path": "../escape.pdf", "content": "hi"})
+check("make_document stays in workspace", not ok and "DENIED" in out)
+ok, out = dtb.call("make_document", {"path": "report.pdf", "content": "# Second version"})
+check("make_document replaces with backup", ok and "backed up" in out)
+check("parse: blocks", [b[0] for b in documents.parse(MD)] == ["h", "p", "ul", "ol", "table"])
+
+# export_file: only into Desktop / Documents / Downloads, with approval
+HOME_ = os.path.expanduser("~")
+exdir = tempfile.mkdtemp(dir=os.path.join(HOME_, "Downloads"), prefix="turner_test_")
+rel_exdir = os.path.relpath(exdir, HOME_)
+ok, out = dtb.call("export_file", {"path": "report.pdf", "destination": rel_exdir})
+check("export copies into Downloads subfolder", ok and os.path.isfile(os.path.join(exdir, "report.pdf")))
+ok, out = dtb.call("export_file", {"path": "report.pdf", "destination": rel_exdir})
+check("export over an existing file keeps the old one", ok and "kept in .turner/backups" in out)
+for bad_dest in ["/etc", "~/.ssh", "~", HOME_ + "/models", "/tmp", "~/Documents/../.ssh/x.pdf"]:
+    ok, out = dtb.call("export_file", {"path": "report.pdf", "destination": bad_dest})
+    check("export refused: " + bad_dest, not ok and "DENIED" in out)
+ok, out = dtb.call("export_file", {"path": "/etc/hosts", "destination": rel_exdir})
+check("export only workspace files", not ok and "workspace" in out)
+ok, out = dtb.call("export_file", {"path": ".turner/audit.jsonl", "destination": rel_exdir})
+check("export never takes .turner", not ok)
+ok, out = dtb.call("export_file", {"path": "report.pdf", "destination": "Desktop/Some Folder That Does Not Exist"})
+check("export refuses a destination with no extension that is not a folder", not ok and "no file extension" in out)
+ok, out = dtb.call("make_document", {"path": "ph.pdf", "content": "Dear [Hiring Manager Name],\n\nHello from [Your Name]."})
+check("make_document warns about placeholders", ok and "WARNING" in out and "placeholders" in out)
+ok, out = dtb.call("make_document", {"path": "clean.pdf", "content": "Dear Hiring Manager,\n\nHello from Abang."})
+check("no placeholder warning on a clean document", ok and "WARNING" not in out)
+ok, out = dtb.call("export_file", {"path": "report.pdf", "destination": "Desktop/no_such_folder_xyz/a.pdf"})
+check("export needs an existing folder", not ok and "does not exist" in out)
+rpol = Policy(dws, approve="readonly", interactive=False)
+ok, out = Toolbox(rpol).call("export_file", {"path": "report.pdf", "destination": rel_exdir})
+check("export disabled in read-only", not ok)
+npol = Policy(dws, approve="ask", interactive=False)
+ok, out = Toolbox(npol).call("export_file", {"path": "report.pdf", "destination": rel_exdir + "/second.pdf"})
+check("export asks for approval (refused when nobody can answer)", not ok and not os.path.exists(os.path.join(exdir, "second.pdf")))
+_shutil.rmtree(exdir, ignore_errors=True)
+
+# a relative path that is not in the workspace is also looked for under the home folder
+fbdir = tempfile.mkdtemp(dir=os.path.join(HOME_, "Downloads"), prefix="turner_test_")
+with open(os.path.join(fbdir, "cv.txt"), "w") as f:
+    f.write("hello cv")
+ok, out = dtb.call("read_file", {"path": "Downloads/" + os.path.basename(fbdir) + "/cv.txt"})
+check("relative path falls back to the home folder", ok and "hello cv" in out)
+ok, out = dtb.call("read_file", {"path": os.path.basename(fbdir) + "/cv.txt"})
+check("also finds it relative to Downloads", ok and "hello cv" in out)
+ok, out = dtb.call("write_file", {"path": "Downloads/" + os.path.basename(fbdir) + "/new.txt", "content": "x"})
+check("fallback never applies to writes", ok and not os.path.exists(os.path.join(fbdir, "new.txt")))
+_shutil.rmtree(fbdir, ignore_errors=True)
+
+# refusal guard
+for said in ["I cannot directly create a PDF file or place files onto your desktop.", "I can't access that file path directly.",
+             "I cannot access files in `/Users/jiqturner/Downloads/`.", "I cannot generate a PDF file directly. I am a text-based AI.",
+             "I am a text-based AI and do not have the capability to create or transfer files."]:
+    check("refusal caught: " + said[:34], REFUSAL.search(said))
+for fine in ["I created the file report.pdf in the workspace.", "Here is the cover letter you asked for.",
+             "The meeting was moved because the client can't attend on Friday.", "Done. The total is 42."]:
+    check("not a refusal: " + fine[:34], not REFUSAL.search(fine))
+check("file task detected", FILE_TASK.search("can u create me a pdf put it inside desktop"))
+check("placeholder detected", PLACEHOLDER.search("Dear Hiring Manager, [Your Name] [Company Address]"))
+check("no placeholder in a normal letter", not PLACEHOLDER.search("Yours sincerely, Abang"))
+gag = Agent(None, Policy(dws, approve="ask", interactive=False), verbose=False)
+st = {"fired": set(), "task": "can u create me a pdf put it in Desktop", "tools": {"make_document", "export_file", "read_document"}, "last_denied": False,
+      "wrote_code": False, "ran_since_write": True, "last_run_failed": False, "unreviewed": set(), "save_nudges": 0}
+n1 = gag._nudge("chat", st, [], "I cannot generate a PDF file directly.")
+check("nudge names the right tools", n1 and "make_document" in n1 and "export_file" in n1)
+check("nudge fires only once", gag._nudge("chat", st, [], "I cannot generate a PDF file directly.") is None)
+st2 = dict(st, fired=set(), last_denied=True)
+check("no nudge when a safety rule really said no", gag._nudge("chat", st2, [], "I cannot generate a PDF file directly.") is None)
+st4 = {"fired": set(), "task": "make a pdf about cats and put it on my Desktop", "tools": {"make_document", "export_file"}, "last_denied": False,
+       "wrote_code": False, "ran_since_write": True, "last_run_failed": False, "unreviewed": set(), "save_nudges": 0}
+check("export nudge: made the file but did not move it", gag._nudge("write", st4, ["make_document"], "Done.") and "export_file" in gag._nudge("write", dict(st4, fired=set()), ["make_document"], "Done."))
+check("export nudge: not when it already exported", gag._nudge("write", dict(st4, fired=set()), ["make_document", "export_file"], "Done.") is None)
+check("export nudge: not when no folder was asked for", gag._nudge("write", dict(st4, fired=set(), task="make a pdf about cats"), ["make_document"], "Done.") is None)
+st3 = dict(st, fired=set(), task="what is the capital of France")
+check("no nudge for a non-file question", gag._nudge("chat", st3, [], "I can't access that information.") is None)
+sysp = skills.system_prompt("chat", dws, "now")
+check("system prompt states the abilities", "You CAN create PDF" in sysp and "You CAN put a finished file" in sysp and "Never answer" in sysp)
+check("code mode does not promise export", "export_file" not in skills.system_prompt("code", dws, "now"))
+check("pdf request routes to write", skills.route(None, "can u create me a pdf put it inside desktop") == "write")
+check("csv + pdf request is not hijacked", skills.route(None, "analyse sales.csv and make a pdf chart") == "analyse")
+_probs = skills.load_custom(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills"), set(tb.tools))
+check("real skills folder loads without problems", not _probs)
+check("jobs mode loads and routes", "jobs" in skills.SKILLS and skills.route(None, "write me a cover letter for this role") == "jobs")
+check("jobs mode has the document tools", {"read_document", "make_document", "export_file"} <= set(skills.SKILLS["jobs"]["tools"]))
+_shutil.rmtree(dws, ignore_errors=True)
+
 print("%d passed, %d failed" % (passed, failed))
 sys.exit(1 if failed else 0)

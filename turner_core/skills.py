@@ -21,14 +21,26 @@ RULES = """Rules that always apply:
 - Never ask for, store or print passwords, keys or tokens.
 - When the work is finished, answer the user in plain language. Keep it short unless they asked for detail."""
 
+ABILITIES = [
+    (("read_document", "read_file"), "- You CAN read files anywhere in the user's home folder (Downloads, Desktop, Documents and so on). "
+     "Give read_document (PDF, Word, Excel, CSV) or read_file (text) the full path, for example /Users/NAME/Downloads/file.pdf. "
+     "A path such as Downloads/file.pdf also works."),
+    (("make_document",), "- You CAN create PDF, Word (.docx) and Excel (.xlsx) files: call make_document with the content in simple Markdown."),
+    (("export_file",), "- You CAN put a finished file on the user's Desktop, Documents or Downloads: create it in the workspace first, "
+     "then call export_file, but only when the user asks for the file to be somewhere else (the user is asked to approve). "
+     "Never say you cannot save to the Desktop."),
+]
+NEVER_SAY = ("- Never answer \"I can't access that\", \"I can't create PDFs\" or \"I'm just a text-based AI\" for a file, document or web task. "
+             "Call the tool. If it fails, tell the user the exact error.")
+
 SKILLS = {
     "chat": {
         "label": "General assistant",
         "temperature": 0.7,
         "max_tokens": 1500,
-        "tools": ["web_search", "fetch_url", "read_file", "list_dir", "run_python", "remember"],
+        "tools": ["web_search", "fetch_url", "read_file", "read_document", "list_dir", "run_python", "make_document", "export_file", "remember"],
         "playbook": """You are in conversation mode.
-- Answer directly. Use a tool only when it gives a better answer: run_python for arithmetic or dates, web_search for current events, read_file when the user names a file.
+- Answer directly. Use a tool only when it gives a better answer: run_python for arithmetic or dates, web_search for current events, read_file or read_document when the user names a file, make_document when they want a PDF, Word or Excel file.
 - If the user asks you to remember something, or states a lasting preference or fact about themselves or the project, call remember with one short sentence, then confirm in one line. Do not repeat earlier answers.""",
     },
     "code": {
@@ -48,7 +60,7 @@ Keep solutions small and standard-library first. Handle bad input and missing fi
         "label": "Researcher",
         "temperature": 0.4,
         "max_tokens": 2500,
-        "tools": ["web_search", "fetch_url", "read_document", "read_file", "write_file", "remember"],
+        "tools": ["web_search", "fetch_url", "read_document", "read_file", "write_file", "make_document", "export_file", "remember"],
         "playbook": """You are in research mode. Work in this order:
 1. SEARCH: call web_search with specific keywords. Try a second, different query if the first is weak.
 2. READ: call fetch_url on the 2 or 3 most relevant, most trustworthy results. Snippets alone are not enough.
@@ -60,19 +72,20 @@ Only state what the pages you read support. Mark anything from your own memory a
         "label": "Writer and editor",
         "temperature": 0.8,
         "max_tokens": 3500,
-        "tools": ["read_file", "read_document", "write_file", "web_search", "fetch_url", "remember"],
+        "tools": ["read_file", "read_document", "write_file", "make_document", "export_file", "web_search", "fetch_url", "remember"],
         "playbook": """You are in writing mode.
 1. Work out the reader, the purpose, the format and the length. If the user gave source material or named a file, read it first with read_file or read_document.
 2. Write the full piece: lead with the main point, use short paragraphs and concrete wording, and match the tone the user asked for (default: clear and professional).
 3. Re-read once before answering: cut filler, fix grammar, and check every fact and number against the source material. Do not add facts that are not in the sources.
-4. If the user asked for a file, save it with write_file and say where. Otherwise put the finished text in your answer.
+4. If the user asked for a file, save it and say where: use make_document for a PDF, Word (.docx) or Excel (.xlsx) file (write the text in simple Markdown), or write_file for plain text. If they want it on their Desktop, Documents or Downloads, call export_file after saving, but never export a file the user did not ask to move. Otherwise put the finished text in your answer.
+   Use the real names and details from the sources the user gave. Never leave placeholders such as [Your Name]. When the user asks you to write the content (bullet points, a summary, a letter), write it yourself now: never answer "please provide the content". If the topic is vague, choose sensible content and say in one line what you assumed. Ask only for personal facts you cannot know, such as their name or contact details, and only if no source has them.
 When editing someone's text, keep their meaning and voice, and list the main changes you made.""",
     },
     "analyse": {
         "label": "Analyst",
         "temperature": 0.3,
         "max_tokens": 3000,
-        "tools": ["list_dir", "read_file", "read_document", "run_python", "write_file", "search_files", "remember"],
+        "tools": ["list_dir", "read_file", "read_document", "run_python", "write_file", "make_document", "export_file", "search_files", "remember"],
         "playbook": """You are in analysis mode. Work in this order:
 1. INSPECT: look at the material first (read_document, read_file, or run_python with pandas: shape, columns, head, missing values).
 2. COMPUTE: do every calculation with run_python and print the results. Never do arithmetic in your head and never estimate a number you could compute.
@@ -96,7 +109,7 @@ For non-numeric analysis (documents, plans, arguments): summarise the facts, the
         "label": "Risk analyst",
         "temperature": 0.4,
         "max_tokens": 3000,
-        "tools": ["risk_register", "read_document", "read_file", "write_file", "web_search", "fetch_url", "remember"],
+        "tools": ["risk_register", "read_document", "read_file", "write_file", "make_document", "export_file", "web_search", "fetch_url", "remember"],
         "playbook": """You are in risk-management mode. Work in this order:
 1. CONTEXT: restate the activity, its objective and what would count as failure. If the user named a file, read it first.
 2. IDENTIFY: list the real risks across categories: technical, schedule, cost, safety, legal/compliance, security/data, people, supplier, environment.
@@ -145,6 +158,9 @@ STRONG_CODE = re.compile(r"\b[\w\-]+\.(py|js|ts|tsx|jsx|sh|sql|html|css|go|rs|ja
                          r"(script|function|program|code)\b|\b(traceback|stack trace|unit tests?|pytest|refactor|debug)\b", re.I)
 FOLLOW_UP = re.compile(r"\b(it|that|this|them|those|now|again|also|instead|another|more|less|shorter|longer|faster|simpler|"
                        r"fix|change|add|remove|update|redo|retry|continue|same)\b", re.I)
+DOC_ACTION = re.compile(r"\b(create|make|generate|produce|export|save|turn|convert|put|give me|build)\b.{0,60}\b(pdf|docx|word (document|file|doc))\b"
+                        r"|\b(pdf|docx)\b.{0,30}\b(of|for|from|with|containing|called|named)\b", re.I)
+DATA_WORDS = re.compile(r"\b(csv|xlsx|spreadsheet|dataset|analy[sz]e|statistics)\b", re.I)
 ALIASES = {"analyze": "analyse", "analysis": "analyse", "coding": "code", "writing": "write", "risks": "risk",
            "frontend": "frontend", "ui": "frontend"}
 
@@ -221,6 +237,8 @@ def route(llm, message, previous=None):
         return "frontend"
     if STRONG_CODE.search(message):
         return "code"
+    if DOC_ACTION.search(message) and not DATA_WORDS.search(message):
+        return "write"                             # "make me a PDF of ..." is a document job, not chat
     if llm is None:
         return heuristic(message)
     prev = ""
@@ -244,7 +262,8 @@ def route(llm, message, previous=None):
 
 def system_prompt(skill, workdir, now, memory="", approve="ask", project="", summary="", has_plan=False):
     sk = SKILLS[skill]
-    parts = [IDENTITY, "", sk["playbook"] + (PLAN_HINT if has_plan else ""), "", RULES, "",
+    can = [text for names, text in ABILITIES if any(n in sk["tools"] for n in names)]
+    parts = [IDENTITY, "", sk["playbook"] + (PLAN_HINT if has_plan else ""), "", RULES + ("\n" + "\n".join(can) if can else "") + "\n" + NEVER_SAY, "",
              "Context:", "- Now: %s" % now, "- Workspace folder (files you create go here): %s" % workdir]
     if approve == "readonly":
         parts.append("- READ-ONLY mode: you cannot write files or run code. Say so if the task needs it.")
